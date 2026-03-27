@@ -80,7 +80,7 @@ def train(
             val_samples += len(batch)
 
         run.log(
-            {"epoch": epoch, "acc": (train_loss / train_samples), "loss": (val_loss / val_samples)}
+            {"acc": (train_loss / train_samples), "loss": (val_loss / val_samples)}
         )
 
     # Finish the run and upload any remaining data.
