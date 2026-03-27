@@ -38,7 +38,16 @@ classifiers = [
 
 # ---- Main dependencies ----
 
-dependencies = []
+dependencies = [
+    "flax>=0.12.6",
+    "loguru>=0.7.3",
+    "numpy>=2.4.3",
+    "requests>=2.32.5",
+    "tiktoken>=0.12.0",
+    "torch>=2.10.0",
+    "transformers==4.46.0",
+    "wandb>=0.25.1",
+]
 
 
 # ---- Dev dependencies ----
@@ -57,7 +66,8 @@ dev = [
 [project.scripts]
 # Add script entry points here:
 gpt2_inx = "gpt2_inx:main"
-
+finetune = "gpt2_inx.entry_pts.sft_gpt2:main"
+infer = "gpt2_inx.entry_pts.eval_gpt2:main"
 
 # ---- Build system ----
 
