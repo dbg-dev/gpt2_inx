@@ -14,7 +14,8 @@ authors = [
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11,<4.0"
-dynamic = ["version"]
+# dynamic = ["version"]
+version = "0.1"
 
 # https://pypi.org/classifiers/
 # Adjust as needed:
