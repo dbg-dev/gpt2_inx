@@ -28,10 +28,12 @@ def collate(
     batch: Iterable[list[int]],
     pad_token_id: int = 50256,
     ignore_index: int = -100,
-    allowed_max_length: int | None = None,
+    allowed_max_length: int | None = 1024,
 ) -> tuple[list[list[int]], list[list[int]]]:
     # Find the longest sequence in the batch
-    max_len = max(map(len, batch))
+    # max_len = max(map(len, batch))
+    max_len = allowed_max_length if allowed_max_length is not None else max(map(len, batch))
+
 
     # Pad and prepare inputs and targets
     data: list[list[int]] = []
@@ -58,7 +60,7 @@ def collate_numpy(
     batch: Iterable[list[int]],
     pad_token_id: int = 50256,
     ignore_index: int = -100,
-    allowed_max_length: int | None = None,
+    allowed_max_length: int | None = 1024,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     data, labels = collate(batch, pad_token_id, ignore_index, allowed_max_length)
     return jnp.array(data), jnp.array(labels)
