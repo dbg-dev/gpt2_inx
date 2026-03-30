@@ -4,7 +4,7 @@ from typing import Any
 
 import optax
 from flax.nnx import Module, Optimizer, Param, jit, value_and_grad
-from jax import Array, device_count, device_put, process_index, lax
+from jax import Array, device_count, device_put, process_index, lax, devices, default_backend
 from torch.utils.data import DataLoader
 
 import wandb
@@ -12,6 +12,7 @@ import numpy as np
 
 from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 from jax.experimental import mesh_utils
+
 
 @dataclass(slots=True)
 class TrainerConfig:
@@ -25,9 +26,6 @@ def make_train_step(loss_fn: Callable[[Module, Array, Array], Array]):
     @jit
     def train_step(model: Module, optimizer: Optimizer[Any], batch: Array, labels: Array):
         loss, grads = value_and_grad(loss_fn)(model, batch, labels)
-        # Sync gradients and loss across all TPU devices
-        loss = lax.pmean(loss, axis_name="batch")
-        grads = lax.pmean(grads, axis_name="batch")
         optimizer.update(model, grads)
         return loss
 
@@ -49,7 +47,8 @@ def train(
     loss_fn: Callable[[Module, Array, Array], Array],
     config: TrainerConfig,
 ):
-    # --- TPU mesh setup ---
+
+    # --- mesh setup ---
     devices = mesh_utils.create_device_mesh((device_count(),))
     mesh = Mesh(devices, axis_names=("batch",))
     data_sharding = NamedSharding(mesh, P("batch"))
