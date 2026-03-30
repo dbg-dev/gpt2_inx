@@ -9,7 +9,7 @@ from jax import Array, device_put, devices
 from torch.utils.data import DataLoader
 
 import wandb
-
+from loguru import logger
 
 
 @dataclass(slots=True)
@@ -48,7 +48,19 @@ def train(
     def val_step(model: Module, batch: Array, labels: Array):
         return loss_fn(model, batch, labels)
 
+    run = wandb.init(
+        entity="minky-raccoon-me",
+        project="my-gpt2-sft-project",
+        config={
+            "learning_rate": config.learning_rate,
+            "architecture": "GPT2",
+            "dataset": "Rabast instructions",
+            "epochs": config.n_epochs,
+        },
+    )
+
     for epoch in range(config.n_epochs):
+        logger.info("Epoch {}", epoch)
         train_loss, train_samples = 0.0, 0
         for batch, labels in train_loader:
             batch = device_put(array(batch), devices()[0])
@@ -65,4 +77,12 @@ def train(
             val_loss += float(loss) * len(batch)
             val_samples += len(batch)
 
-        print(f"Epoch {epoch+1}: train_loss={train_loss/train_samples:.4f} val_loss={val_loss/val_samples:.4f}")
+        metrics = {
+            "train_loss": train_loss / train_samples,
+            "val_loss": val_loss / val_samples,
+            "epoch": epoch + 1,
+        }
+        logger.info(f"Epoch {epoch+1}: train_loss={metrics['train_loss']:.4f} val_loss={metrics['val_loss']:.4f}")
+        run.log(metrics)
+
+    run.finish()
