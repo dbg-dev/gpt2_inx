@@ -4,14 +4,12 @@ from typing import Any
 
 import optax
 from flax.nnx import Module, Optimizer, Param, jit, value_and_grad, split, merge
-from jax import Array, device_count, device_put, process_index, lax, devices, default_backend
+from jax.numpy import array
+from jax import Array, device_put, devices
 from torch.utils.data import DataLoader
 
 import wandb
-import numpy as np
 
-from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
-from jax.experimental import mesh_utils
 
 
 @dataclass(slots=True)
@@ -22,102 +20,49 @@ class TrainerConfig:
     weight_decay: float = 0.1
 
 
-def make_train_step(loss_fn: Callable[[Module, Array, Array], Array]):
+def train(
+    model: Module, 
+    train_loader: DataLoader[Any], 
+    val_loader: DataLoader[Any],
+    loss_fn: Callable[[Module, Array, Array], Array], 
+    config: TrainerConfig
+):
+    # Move model to GPU
+    graphdef, state = split(model)
+    state = device_put(state, devices()[0])
+    model = merge(graphdef, state)
+
+    optimizer = Optimizer(
+        model,
+        optax.adamw(learning_rate=config.learning_rate, weight_decay=config.weight_decay),
+        wrt=Param
+    )
+
     @jit
     def train_step(model: Module, optimizer: Optimizer[Any], batch: Array, labels: Array):
         loss, grads = value_and_grad(loss_fn)(model, batch, labels)
         optimizer.update(model, grads)
         return loss
 
-    return train_step
-
-
-def make_val_step(loss_fn: Callable[[Module, Array, Array], Array]):
     @jit
-    def val_step(model: Module, batch: Array, labels: Array) -> Array:
+    def val_step(model: Module, batch: Array, labels: Array):
         return loss_fn(model, batch, labels)
 
-    return val_step
-
-
-def train(
-    model: Module,
-    train_loader: DataLoader[Any],
-    val_loader: DataLoader[Any],
-    loss_fn: Callable[[Module, Array, Array], Array],
-    config: TrainerConfig,
-):
-
-    # --- mesh setup ---
-    devices = mesh_utils.create_device_mesh((device_count(),))
-    mesh = Mesh(devices, axis_names=("batch",))
-    data_sharding = NamedSharding(mesh, P("batch"))
-    replicated_sharding = NamedSharding(mesh, P())
-
-    def shard_batch(batch: Any, labels: Any):
-        batch = np.array(batch)
-        labels = np.array(labels)
-        if device_count() > 1:
-            return (
-                device_put(batch, data_sharding),
-                device_put(labels, data_sharding),
-            )
-        # single device — just move to device normally
-        return device_put(batch), device_put(labels)
-
-    # --- Move model to device before creating optimizer ---
-    graphdef, state = split(model)
-    state = device_put(state, replicated_sharding)
-    model = merge(graphdef, state)
-
-    optimizer = Optimizer[Any](
-        model,
-        optax.adamw(learning_rate=config.learning_rate, weight_decay=config.weight_decay),
-        wrt=Param,
-    )
-
-    # Explicitly replicate model+optimizer state across all TPU devices
-    device_put(optimizer, replicated_sharding)
-
-    train_step = make_train_step(loss_fn)
-    val_step = make_val_step(loss_fn)
-
-    # --- wandb: main process only ---
-    if process_index() == 0:
-        run = wandb.init(
-            # Set the wandb entity where your project will be logged (generally your team name).
-            entity="minky-raccoon-me",
-            # Set the wandb project where this run will be logged.
-            project="my-gpt2-sft-project",
-            # Track hyperparameters and run metadata.
-            config={
-                "learning_rate": config.learning_rate,
-                "architecture": "GPT2",
-                "dataset": "Rabast instructions",
-                "epochs": config.n_epochs,
-            },
-        )
-
     for epoch in range(config.n_epochs):
-        # train
         train_loss, train_samples = 0.0, 0
         for batch, labels in train_loader:
-            batch, labels = shard_batch(batch, labels)
-            train_loss += train_step(model, optimizer, batch, labels) * len(batch)
+            batch = device_put(array(batch), devices()[0])
+            labels = device_put(array(labels), devices()[0])
+            loss = train_step(model, optimizer, batch, labels)
+            train_loss += float(loss) * len(batch)
             train_samples += len(batch)
 
-        # val
         val_loss, val_samples = 0.0, 0
         for batch, labels in val_loader:
-            batch, labels = shard_batch(batch, labels)
-            val_loss += val_step(model, batch, labels) * len(batch)
+            batch = device_put(array(batch), devices()[0])
+            labels = device_put(array(labels), devices()[0])
+            loss = val_step(model, batch, labels)
+            val_loss += float(loss) * len(batch)
             val_samples += len(batch)
 
-        if process_index() == 0:
-            run.log(
-                {"acc": (train_loss / train_samples), "loss": (val_loss / val_samples)}
-            )
-
-    if process_index() == 0:
-        # Finish the run and upload any remaining data.
-        run.finish()
+        print(f"Epoch {epoch+1}: train_loss={train_loss/train_samples:.4f} val_loss={val_loss/val_samples:.4f}")
