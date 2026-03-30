@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import optax
-from flax.nnx import Module, Optimizer, Param, jit, value_and_grad
+from flax.nnx import Module, Optimizer, Param, jit, value_and_grad, split, merge
 from jax import Array, device_count, device_put, process_index, lax, devices, default_backend
 from torch.utils.data import DataLoader
 
@@ -64,6 +64,11 @@ def train(
             )
         # single device — just move to device normally
         return device_put(batch), device_put(labels)
+
+    # --- Move model to device before creating optimizer ---
+    graphdef, state = split(model)
+    state = device_put(state, replicated_sharding)
+    model = merge(graphdef, state)
 
     optimizer = Optimizer[Any](
         model,
