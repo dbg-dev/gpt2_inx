@@ -56,10 +56,15 @@ def train(
     replicated_sharding = NamedSharding(mesh, P())
 
     def shard_batch(batch: Any, labels: Any):
-        return (
-            device_put(np.array(batch), data_sharding),
-            device_put(np.array(labels), data_sharding),
-        )
+        batch = np.array(batch)
+        labels = np.array(labels)
+        if device_count() > 1:
+            return (
+                device_put(batch, data_sharding),
+                device_put(labels, data_sharding),
+            )
+        # single device — just move to device normally
+        return device_put(batch), device_put(labels)
 
     optimizer = Optimizer[Any](
         model,
