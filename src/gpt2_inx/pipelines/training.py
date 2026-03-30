@@ -102,7 +102,7 @@ def train_model(model_id: str, train_data: list[str], val_data: list[str]) -> Gr
         batch_size=config.batch_size,
         collate_fn=collate_numpy,
         shuffle=False,
-        drop_last=False,
+        drop_last=True,
         num_workers=num_workers,
     )
 
