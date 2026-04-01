@@ -49,6 +49,7 @@ class GPT2(Module):
             [TransformerBlock(hps, rngs) for _ in range(hps.num_layers)]
         )
         self.final_norm: LayerNorm = LayerNorm(hps.embed_dim, use_bias=hps.use_bias, rngs=rngs)
+        self.lm_head: Linear = Linear(hps.embed_dim, hps.vocab_size, use_bias=False, rngs=rngs) 
 
     @override
     def __call__(self, token_ids: Array):
@@ -56,5 +57,5 @@ class GPT2(Module):
         for block in self.blocks:
             x = block(x)
         x = self.final_norm(x)
-        logits = self.embed.tok_embedding.attend(x)
+        logits = self.lm_head(x)
         return logits
