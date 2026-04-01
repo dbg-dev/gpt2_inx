@@ -1,22 +1,23 @@
 from loguru import logger
 from transformers import GPT2Tokenizer
-from jax.numpy import array
-from gpt2_inx.configs.hyperparams import GPT2_124M
 from gpt2_inx.pipelines.model import from_hf
-from gpt2_inx.samplers import sample_greedy
+from gpt2_inx.pipelines.inference import generate
 
 
 def main():
+    from gpt2_inx.configs.hyperparams import GPT2_124M
     hfmodel = "gpt2"
+    
     model = from_hf(GPT2_124M, hfmodel)
     tokenizer = GPT2Tokenizer.from_pretrained(hfmodel)
 
     prompt = "Hello, I am"
+    
     model.eval()  # put model into evaluation mode. will switch off dropouts
-    inputs = array(tokenizer(prompt, return_tensors="np")["input_ids"])
-    logits = sample_greedy(model, inputs)
+    inputs = tokenizer(prompt, return_tensors="np")["input_ids"]
+    logits = generate(model, inputs, 10)
+    act = tokenizer.decode(logits, skip_special_tokens=True)
 
-    act = tokenizer.decode(logits[0].tolist(), skip_special_tokens=True)
     logger.info(f" output = {act}")
 
 
