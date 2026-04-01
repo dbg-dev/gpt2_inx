@@ -14,7 +14,7 @@ import wandb
 class TrainerConfig:
     batch_size: int
     n_epochs: int = 2
-    learning_rate: float = 1e-3
+    learning_rate: float = 5e-5
     weight_decay: float = 0.1
 
 
@@ -66,7 +66,7 @@ def train(
         },
     )
 
-    for epoch in range(config.n_epochs):
+    for _ in range(config.n_epochs):
         # train
         train_loss, train_samples = 0.0, 0
         for batch, labels in train_loader:
