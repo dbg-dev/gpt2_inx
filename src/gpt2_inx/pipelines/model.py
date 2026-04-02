@@ -1,4 +1,4 @@
-from typing import Any, Hashable
+from typing import Any, Hashable, TypeAlias
 
 from flax.nnx import Module, Rngs, merge, split, state, to_pure_dict
 from flax.traverse_util import flatten_dict, unflatten_dict
@@ -12,7 +12,7 @@ from gpt2_inx.models.params import hyparams
 
 from torch import Tensor
 
-ParamKey = tuple[Hashable, ...]
+ParamKey: TypeAlias = tuple[Hashable, ...]
 
 
 def validate_mapping_sets(

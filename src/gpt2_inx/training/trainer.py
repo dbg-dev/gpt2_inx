@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 import optax
 from flax.nnx import Module, Optimizer, Param, jit, value_and_grad
@@ -8,6 +8,8 @@ from jax import Array
 from torch.utils.data import DataLoader
 
 import wandb
+
+LossFn: TypeAlias = Callable[[Module, Array, Array], Array]
 
 
 @dataclass(slots=True)
