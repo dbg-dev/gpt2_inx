@@ -1,21 +1,12 @@
-from jax._src.basearray import Array
-
-
-from flax.nnx.module import Module
-
-
-from flax.nnx.training.optimizer import Optimizer
-
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
-from jax.numpy import mean
 import optax
+from jax import Array, device_get
+from jax.numpy import mean
 from flax.nnx import Module, Optimizer, Param, jit, value_and_grad, scan, Carry
 from jax.random import PRNGKey, permutation, split as rnd_split
-from jax import Array, device_get
 
 import wandb
 
