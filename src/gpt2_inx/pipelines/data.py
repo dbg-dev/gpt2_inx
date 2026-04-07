@@ -70,31 +70,18 @@ def pad(
     return input, label
 
 
-def encode_pad(
-    texts: list[tuple[str,str]], # each tuple = instruction, response
-    tokenizer: tiktoken.core.Encoding,
-    seq_len: int,
-    pad_token_id: int = 50256,
-    ignore_index: int = -100,
-) -> list[Sample]:
-    logger.info("Encoding and padding text")
-    return [
-        pad(tokenizer.encode(text[0] + text[1]), seq_len, pad_token_id, ignore_index)
-        for text in texts
-    ]
-
-
 def split(
     data: list[Any], 
     train_split: float = 0.85, 
     val_split: float = 0.1, 
-    seed: int = 42
+    seed: int | None = 42
 ) -> tuple[list[Any], list[Any], list[Any]]:
 
     logger.info("Splitting dataset...")
 
-    random.seed(seed)
-    random.shuffle(data)
+    if seed is not None: 
+        random.seed(seed)
+        random.shuffle(data)
 
     n = len(data)
     train_size = int(n * train_split)
@@ -116,20 +103,49 @@ def to_jax(dataset: Sample):
     return inputs, labels
 
 
-def prepare(url: str, model_id: str):
-    tokenizer = tiktoken.get_encoding(model_id)
-    raw = get_instructions(url)
-    alpacas = format_to_alpaca(raw)
-    encoded = encode_pad(alpacas, tokenizer, seq_len=128)
-    train_data, _, val_data = [to_jax(x) for x in split(encoded)]
+def prep_dataset(ds: list[dict[str, str]], tokenizer: tiktoken.core.Encoding):
+    """
+    turns dataset into alpaca format, encodes, splits into input and target, then pads to same length
+    """
+    encoded = [
+        tokenizer.encode("".join(format_alpaca(d)))
+        for d in ds
+    ]
+    max_len = max(map(len, encoded)) + 1
+    xys = ([pad(e, max_len) for e in encoded])
+    return to_jax(xys)
 
-    return train_data, val_data
+def prep_test_inxs(
+    instructions: list[dict[str, str]], 
+    tokenizer: tiktoken.core.Encoding,
+    pad_token_id: int = 50256,
+):
+    """
+    Encodes alpaca instructions without responses to use for testing
+    return is encoded instruction plus expected response string
+    """
+    def enc(instruction: dict[str, str]):
+        inx, resp = format_alpaca(instruction)
+        return tokenizer.encode(inx) + [pad_token_id], resp
+
+    return [enc(i) for i in instructions]
+
+
+def prepare(url: str, tokenizer: tiktoken.core.Encoding):
+    training, test, validation = split(get_instructions(url))
+
+    train_ds, val_ds = [prep_dataset(d, tokenizer) for d in [training, validation]]
+    test_prompts = prep_test_inxs(test, tokenizer)
+
+    return train_ds, val_ds, test_prompts
 
 
 def main():
     url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch07/01_main-chapter-code/instruction-data.json"
-    model_id = "gpt2"
-    _, _ = prepare(url, model_id)
+    tokenizer = tiktoken.get_encoding("gpt2")
+    _ = prepare(url, tokenizer)
+
+
 
 
 if __name__ == "__main__":
