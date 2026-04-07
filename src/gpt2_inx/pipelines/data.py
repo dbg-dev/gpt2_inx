@@ -115,20 +115,19 @@ def prep_dataset(ds: list[dict[str, str]], tokenizer: tiktoken.core.Encoding):
     xys = ([pad(e, max_len) for e in encoded])
     return to_jax(xys)
 
+
+
+
 def prep_test_inxs(
     instructions: list[dict[str, str]], 
-    tokenizer: tiktoken.core.Encoding,
-    pad_token_id: int = 50256,
+    tokenizer: tiktoken.core.Encoding
 ):
     """
     Encodes alpaca instructions without responses to use for testing
     return is encoded instruction plus expected response string
     """
-    def enc(instruction: dict[str, str]):
-        inx, resp = format_alpaca(instruction)
-        return tokenizer.encode(inx) + [pad_token_id], resp
+    return [format_alpaca(i) for i in instructions]
 
-    return [enc(i) for i in instructions]
 
 
 def prepare(url: str, tokenizer: tiktoken.core.Encoding):
