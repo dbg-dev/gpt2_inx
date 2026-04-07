@@ -41,7 +41,6 @@ classifiers = [
 
 dependencies = [
     "flax>=0.12.6",
-    "jax[cuda12,tpu]>=0.9.2 ; sys_platform == 'linux'",
     "loguru>=0.7.3",
     "numpy>=2.4.3",
     "requests>=2.32.5",
