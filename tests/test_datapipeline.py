@@ -35,16 +35,16 @@ def test_full_instruction():
         "input": "Occasion",
         "output": "The correct spelling is 'Occasion'.",
     }
-    exp = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+    exp = ("""Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
 ### Instruction:
 Identify the correct spelling of the following word.
 
 ### Input:
-Occasion
+Occasion""", """
 
 ### Response:
-The correct spelling is 'Occasion'."""
+The correct spelling is 'Occasion'.""")
 
     assert format_alpaca(test) == exp
 
@@ -56,17 +56,17 @@ def test_no_input_instruction():
         "output": "An antonym of 'complicated' is 'simple'.",
     }
 
-    exp = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+    exp = ("""Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
 ### Instruction:
-What is an antonym of 'complicated'?
+What is an antonym of 'complicated'?""", """
 
 ### Response:
-An antonym of 'complicated' is 'simple'."""
+An antonym of 'complicated' is 'simple'.""")
 
     assert format_alpaca(test) == exp
 
 
 if __name__ == "__main__":
     # test_numpy_collate()
-    test_collate()
+    test_full_instruction()

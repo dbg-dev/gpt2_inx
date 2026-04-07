@@ -32,7 +32,7 @@ def get_instructions(data_url: str) -> list[dict[str, str]]:
 # -----------------------------
 
 
-def format_alpaca(entry: dict[str, str]) -> str:
+def format_alpaca(entry: dict[str, str]) -> tuple[str, str]:
     instruction_text = (
         f"Below is an instruction that describes a task. "
         f"Write a response that appropriately completes the request."
@@ -42,11 +42,11 @@ def format_alpaca(entry: dict[str, str]) -> str:
     input_text = f"\n\n### Input:\n{entry['input']}" if entry["input"] else ""
     response_text = f"\n\n### Response:\n{entry['output']}"
 
-    prompt = instruction_text + input_text + response_text
-    return prompt
+    prompt = instruction_text + input_text
+    return prompt, response_text
 
 
-def format_to_alpaca(raw_inx: list[dict[str, str]]) -> list[str]:
+def format_to_alpaca(raw_inx: list[dict[str, str]]) -> list[tuple[str, str]]:
     logger.info("Formatting to Alpaca style...")
     return [format_alpaca(x) for x in raw_inx]
 
@@ -71,7 +71,7 @@ def pad(
 
 
 def encode_pad(
-    texts: list[str],
+    texts: list[tuple[str,str]], # each tuple = instruction, response
     tokenizer: tiktoken.core.Encoding,
     seq_len: int,
     pad_token_id: int = 50256,
@@ -79,13 +79,16 @@ def encode_pad(
 ) -> list[Sample]:
     logger.info("Encoding and padding text")
     return [
-        pad(tokenizer.encode(text), seq_len, pad_token_id, ignore_index)
+        pad(tokenizer.encode(text[0] + text[1]), seq_len, pad_token_id, ignore_index)
         for text in texts
     ]
 
 
 def split(
-    data: list[Any], train_split: float = 0.85, val_split: float = 0.1, seed: int = 42
+    data: list[Any], 
+    train_split: float = 0.85, 
+    val_split: float = 0.1, 
+    seed: int = 42
 ) -> tuple[list[Any], list[Any], list[Any]]:
 
     logger.info("Splitting dataset...")
@@ -118,7 +121,7 @@ def prepare(url: str, model_id: str):
     raw = get_instructions(url)
     alpacas = format_to_alpaca(raw)
     encoded = encode_pad(alpacas, tokenizer, seq_len=128)
-    train_data, val_data, _ = [to_jax(x) for x in split(encoded)]
+    train_data, _, val_data = [to_jax(x) for x in split(encoded)]
 
     return train_data, val_data
 
