@@ -1,5 +1,4 @@
-from gpt2_inx.data.transforms import collate, format_alpaca
-
+from gpt2_inx.pipelines.data import pad, format_alpaca
 ##
 ## Test collate
 ##
@@ -8,18 +7,18 @@ from gpt2_inx.data.transforms import collate, format_alpaca
 def test_collate():
     test_batch = [[0, 1, 2, 3, 4], [5, 6], [7, 8, 9]]
 
-    act_inputs, act_targets = collate(test_batch)
+    act_inputs, act_targets = zip(*[pad(test, seq_len=5) for test in test_batch])
 
-    exp_inputs = [
+    exp_inputs = (
         [0, 1, 2, 3, 4],
         [5, 6, 50256, 50256, 50256],
         [7, 8, 9, 50256, 50256],
-    ]
-    exp_outputs = [
+    )
+    exp_outputs = (
         [1, 2, 3, 4, 50256],
         [6, 50256, -100, -100, -100],
         [8, 9, 50256, -100, -100],
-    ]
+    )
 
     assert act_inputs == exp_inputs
     assert act_targets == exp_outputs

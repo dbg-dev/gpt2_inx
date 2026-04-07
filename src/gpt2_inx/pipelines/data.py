@@ -23,12 +23,14 @@ def get_instructions(data_url: str) -> list[dict[str, str]]:
 
     return raw_inx
 
+
 # -----------------------------
 # Instruction formatting
 # There are two types of formatting for instructions:
 # Alpaca
 # Phi-3
 # -----------------------------
+
 
 def format_alpaca(entry: dict[str, str]) -> str:
     instruction_text = (
@@ -44,7 +46,6 @@ def format_alpaca(entry: dict[str, str]) -> str:
     return prompt
 
 
-
 def format_to_alpaca(raw_inx: list[dict[str, str]]) -> list[str]:
     logger.info("Formatting to Alpaca style...")
     return [format_alpaca(x) for x in raw_inx]
@@ -55,7 +56,7 @@ def pad(
     seq_len: int,
     pad_token_id: int = 50256,
     ignore_index: int = -100,
-) -> Sample:       
+) -> Sample:
     # ---- inputs ----
     input = tokens[:seq_len]
     if len(input) < seq_len:
@@ -82,6 +83,7 @@ def encode_pad(
         for text in texts
     ]
 
+
 def split(
     data: list[Any], train_split: float = 0.85, val_split: float = 0.1, seed: int = 42
 ) -> tuple[list[Any], list[Any], list[Any]]:
@@ -107,19 +109,15 @@ def split(
 
 
 def to_jax(dataset: Sample):
-    inputs, labels = [
-        asarray(x, int32) 
-        for x in zip(*dataset)
-    ]
+    inputs, labels = [asarray(x, int32) for x in zip(*dataset)]
     return inputs, labels
 
 
-def pipe(url: str, model_id: str):
+def prepare(url: str, model_id: str):
     tokenizer = tiktoken.get_encoding(model_id)
     raw = get_instructions(url)
     alpacas = format_to_alpaca(raw)
     encoded = encode_pad(alpacas, tokenizer, seq_len=128)
-    logger.info("Convert to JAX arrays")
     train_data, val_data, _ = [to_jax(x) for x in split(encoded)]
 
     return train_data, val_data
@@ -128,7 +126,8 @@ def pipe(url: str, model_id: str):
 def main():
     url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch07/01_main-chapter-code/instruction-data.json"
     model_id = "gpt2"
-    _, _ = pipe(url, model_id)
+    _, _ = prepare(url, model_id)
+
 
 if __name__ == "__main__":
     main()

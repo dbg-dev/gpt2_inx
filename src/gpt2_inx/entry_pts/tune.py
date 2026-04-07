@@ -1,7 +1,7 @@
 from loguru import logger
 from gpt2_inx.configs.hyperparams import GPT2_124M
 from gpt2_inx.pipelines.model import from_hf
-from gpt2_inx.pipelines.training import pipe
+from gpt2_inx.pipelines.data import prepare
 from gpt2_inx.training.trainer import train, TrainerConfig
 from gpt2_inx.training.loss_functions import cross_entropy_loss
 
@@ -17,7 +17,7 @@ def main():
         weight_decay = 0.1,
         seq_len = 128
     )
-    tds, vds = pipe(url, model_id)
+    tds, vds = prepare(url, model_id)
 
     # setup model and trainer
     hfmodel = model_id
