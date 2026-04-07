@@ -140,12 +140,12 @@ def train(
         key, subkey = rnd_split(key)
         txs, tys = shuffle_and_batch(train_data, config, subkey, True)
 
-        # model.train()
+        model.train()
         model, optimizer, train_loss = train_epoch(
             model, optimizer, txs, tys
         )
 
-        # model.eval()
+        model.eval()
         val_loss = val_epoch(model, vxs, vys)
         
         train_loss = float(device_get(train_loss))
