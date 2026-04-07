@@ -3,20 +3,23 @@ from gpt2_inx.utils import timeit
 from functools import partial 
 from flax.nnx import Module, GraphDef, GraphState, merge, split
 from jax import Array, jit
-from jax.numpy import int32, zeros, concat
+from jax.numpy import int32, zeros, concat, where, bool_
 from jax.lax import scan
 from jax.random import PRNGKey, split as rndm_split
 
 from gpt2_inx.samplers import topk_sample
 
+
+EOS_TOKEN_ID = 50256
+
 @partial(jit, static_argnames=("graphdef", "k", "max_new_tokens"))
 def _generate_loop(
-    graphdef: GraphDef, 
+    graphdef: GraphDef[Any], 
     state: GraphState, 
     prompt_ids: Array, 
-    k:int, 
+    k:int,                  # set sample size 
     max_new_tokens: int,
-    key: int
+    key: int                # random split
 ) -> tuple[Array, Any]:
     # preallocate a fixed-length buffer
     zeros_pad = zeros((1, max_new_tokens), dtype=int32)
@@ -24,7 +27,7 @@ def _generate_loop(
 
 
     def step(carry, _):
-        tokens, pos, key = carry
+        tokens, pos, key, done = carry
         key, subkey = rndm_split(key)
 
         model  = merge(graphdef, state)
@@ -32,14 +35,18 @@ def _generate_loop(
         last_logits = logits[0, pos - 1, :]     # (vocab_size,)
         next_token = topk_sample(last_logits, k=k, key=subkey)
 
+        # If already done, emit EOS and don't update tokens
+        next_token = where(done, EOS_TOKEN_ID, next_token)
         tokens = tokens.at[0, pos].set(next_token)
-        return (tokens, pos + 1, key), next_token
+
+        done = done | (next_token == EOS_TOKEN_ID)
+        return (tokens, pos + 1, key, done), next_token
 
 
     start_pos = prompt_ids.shape[1]
-    (tokens, _, _), new_tokens = scan(
+    (tokens, _, _, _), new_tokens = scan(
         step,
-        (tokens, start_pos, key),
+        (tokens, start_pos, key, bool_(False)),
         None,
         length=max_new_tokens,
     )
@@ -59,7 +66,8 @@ def generate(
     key = PRNGKey(seed)
     graphdef, state = split(model)
     tokens, _ = _generate_loop(
-        graphdef, state,
+        graphdef, 
+        state,
         prompt_ids,
         k, max_new_tokens, key
     )
