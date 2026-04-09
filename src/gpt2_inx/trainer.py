@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 import optax
-import jax.numpy as jnp
+from jax.numpy import mean, stack
 
 from jax import Array, device_get, device_put
 from flax.nnx import Module, Optimizer, Param, jit, value_and_grad
@@ -21,7 +21,8 @@ class TrainerConfig:
     n_epochs: int = 2
     learning_rate: float = 5e-5
     weight_decay: float = 0.1
-    seq_len: int = 128  # fine to keep for model config/logging if needed
+    # seq_len: int = 128  # fine to keep for model config/logging if needed
+    eval_freq: int = 5
 
 
 def iter_batches(
@@ -55,7 +56,9 @@ def iter_batches(
         yield inputs[start:end], labels[start:end]
 
 
-def prefetch_to_device(iterator: Iterator[Any], size: int = 2) -> Generator[Any, Any, None]:
+def prefetch_to_device(
+    iterator: Iterator[Any], size: int = 2
+) -> Generator[Any, Any, None]:
     from collections import deque
 
     queue = deque[Any]()
@@ -86,7 +89,7 @@ def make_train_step(loss_fn: LossFn):
     def train_step(
         model: Module,
         optimizer: Optimizer[Any],
-        batch: Array,   # [batch, seq]
+        batch: Array,  # [batch, seq]
         labels: Array,  # [batch, seq]
     ) -> tuple[Module, Optimizer[Any], Array]:
         loss, grads = value_and_grad(loss_fn)(model, batch, labels)
@@ -108,7 +111,10 @@ def make_val_step(loss_fn: LossFn):
     return val_step
 
 
-@timeit
+def mean_loss(losses: list[float]) -> float:
+    return float(device_get(mean(stack(losses))))
+
+
 def train(
     model: Module,
     train_data: tuple[Array, Array],
@@ -116,6 +122,8 @@ def train(
     loss_fn: LossFn,
     config: TrainerConfig,
 ):
+    tokens_seen, global_step = 0, 0
+
     optimizer = Optimizer[Any](
         model,
         optax.adamw(
@@ -136,7 +144,6 @@ def train(
             "architecture": "GPT2",
             "dataset": "Rabast instructions",
             "epochs": config.n_epochs,
-            "seq_len": config.seq_len,
             "batch_size": config.batch_size,
         },
     )
@@ -156,36 +163,43 @@ def train(
             size=2,
         )
 
-        val_iter = prefetch_to_device(
-            iter_batches(
-                val_data,
-                config.batch_size,
-                shuffle=False,
-            ),
-            size=2,
-        )
-
-        model.train()
         train_losses = []
         for batch_x, batch_y in train_iter:
+            model.train()
             model, optimizer, loss = train_step(model, optimizer, batch_x, batch_y)
             train_losses.append(loss)
+            tokens_seen += int(device_get((batch_y != -100).sum()))
+            global_step += 1
 
-        model.eval()
-        val_losses = []
-        for batch_x, batch_y in val_iter:
-            loss = val_step(model, batch_x, batch_y)
-            val_losses.append(loss)
+            # Optional evaluation step
+            if global_step % config.eval_freq == 0:
+                model.eval()
+                val_iter = prefetch_to_device(
+                    iter_batches(
+                        val_data,
+                        config.batch_size,
+                        shuffle=False,
+                    ),
+                    size=2,
+                )
 
-        train_loss = float(device_get(jnp.mean(jnp.stack(train_losses))))
-        val_loss = float(device_get(jnp.mean(jnp.stack(val_losses))))
+                val_losses = []
+                for batch_x, batch_y in val_iter:
+                    loss = val_step(model, batch_x, batch_y)
+                    val_losses.append(loss)
 
-        run.log(
-            {
-                "epoch": epoch,
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-            }
-        )
+                # Important: This is the mean across the batch!!
+                train_loss, val_loss = map(mean_loss, (train_losses, val_losses))
+
+                run.log(
+                    {
+                        "epoch": epoch,
+                        "step": global_step,
+                        "tokens seen": tokens_seen,
+                        "train_loss": train_loss,
+                        "val_loss": val_loss,
+                    }
+                )
 
     run.finish()
+    return model
