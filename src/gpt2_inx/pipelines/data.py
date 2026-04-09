@@ -5,6 +5,7 @@ import requests
 import tiktoken
 from loguru import logger
 from jax.numpy import asarray, int32
+from itertools import accumulate
 
 type Sample = tuple[list[int], list[int]]
 
@@ -33,6 +34,9 @@ def get_instructions(data_url: str) -> list[dict[str, str]]:
 
 
 def format_alpaca(entry: dict[str, str]) -> tuple[str, str]:
+    """
+    Turn dictionary of instructions, input and output into Alpaca instruction fomat
+    """
     instruction_text = (
         f"Below is an instruction that describes a task. "
         f"Write a response that appropriately completes the request."
@@ -46,10 +50,6 @@ def format_alpaca(entry: dict[str, str]) -> tuple[str, str]:
     return prompt, response_text
 
 
-def format_to_alpaca(raw_inx: list[dict[str, str]]) -> list[tuple[str, str]]:
-    logger.info("Formatting to Alpaca style...")
-    return [format_alpaca(x) for x in raw_inx]
-
 
 def pad(
     tokens: list[int],
@@ -57,6 +57,9 @@ def pad(
     pad_token_id: int = 50256,
     ignore_index: int = -100,
 ) -> Sample:
+    """
+    Create an input and label from list of tokens and then pad appropriately so each is seq_len long.
+    """
     # ---- inputs ----
     input = tokens[:seq_len]
     if len(input) < seq_len:
@@ -69,43 +72,44 @@ def pad(
 
     return input, label
 
-
-def split(
-    data: list[Any], 
-    train_split: float = 0.85, 
-    val_split: float = 0.1, 
-    seed: int | None = 42
-) -> tuple[list[Any], list[Any], list[Any]]:
-
-    logger.info("Splitting dataset...")
-
+def shuffle(ls: list[Any], seed: int | None):
+    logger.info("Shuffle dataset...")
     if seed is not None: 
         random.seed(seed)
-        random.shuffle(data)
+        random.shuffle(ls)
 
-    n = len(data)
-    train_size = int(n * train_split)
-    val_size = int(n * val_split)
 
-    train_data = data[:train_size]
-    val_data = data[train_size : train_size + val_size]
-    test_data = data[train_size + val_size :]
+def split(
+    ls: list[Any], 
+    split_ratios: list[float] # list of ratios for each new list
+) -> list[list[Any]]:
+    """
+    Split list into sublists based on supplied ratios
+    """
+    logger.info("Splitting dataset...")
+    if not sum(split_ratios) == 1: 
+        raise ValueError("Split ratios need to sum to 1")
 
-    logger.debug(f"Train: {len(train_data)}")
-    logger.debug(f"Val:   {len(val_data)}")
-    logger.debug(f"Test:  {len(test_data)}")
+    n = len(ls)
+    sizes = [round(n * ratio) for ratio in split_ratios[:-1]]
+    indices = list(accumulate(sizes))
+    intervals = zip([None] + indices, indices + [None], strict=False)
+    sublists = [ls[i:j] for i, j in intervals]
 
-    return train_data, val_data, test_data
+    logger.debug("Sizes: {}", sizes)
+    logger.debug("lengths:   {}", [len(sl) for sl in sublists])
+
+    return sublists
 
 
 def to_jax(dataset: Sample):
     inputs, labels = [asarray(x, int32) for x in zip(*dataset)]
     return inputs, labels
 
-
+# TODO: move this from tiktoken to more generic
 def prep_dataset(ds: list[dict[str, str]], tokenizer: tiktoken.core.Encoding):
     """
-    turns dataset into alpaca format, encodes, splits into input and target, then pads to same length
+    Turns dataset into alpaca format, encodes, splits into input and target, then pads to same length
     """
     encoded = [
         tokenizer.encode("".join(format_alpaca(d)))
@@ -115,26 +119,15 @@ def prep_dataset(ds: list[dict[str, str]], tokenizer: tiktoken.core.Encoding):
     xys = ([pad(e, max_len) for e in encoded])
     return to_jax(xys)
 
-
-
-
-def prep_test_inxs(
-    instructions: list[dict[str, str]], 
-    tokenizer: tiktoken.core.Encoding
-):
-    """
-    Encodes alpaca instructions without responses to use for testing
-    return is encoded instruction plus expected response string
-    """
-    return [format_alpaca(i) for i in instructions]
-
-
-
+# TODO: move this from tiktoken to more generic
 def prepare(url: str, tokenizer: tiktoken.core.Encoding):
-    training, test, validation = split(get_instructions(url))
+    splits = [0.85, 0.1, 0.05]
+    inx = get_instructions(url)
+    shuffle(inx, seed = None)
+    training, test, validation = split(inx, splits)
 
     train_ds, val_ds = [prep_dataset(d, tokenizer) for d in [training, validation]]
-    test_prompts = prep_test_inxs(test, tokenizer)
+    test_prompts = [format_alpaca(i) for i in test]
 
     return train_ds, val_ds, test_prompts
 

@@ -1,10 +1,12 @@
-from gpt2_inx.pipelines.data import pad, format_alpaca
+from gpt2_inx.pipelines.data import pad, format_alpaca, split
+import pytest
+
 ##
 ## Test collate
 ##
 
 
-def test_collate():
+def test_pad():
     test_batch = [[0, 1, 2, 3, 4], [5, 6], [7, 8, 9]]
 
     act_inputs, act_targets = zip(*[pad(test, seq_len=5) for test in test_batch])
@@ -35,16 +37,19 @@ def test_full_instruction():
         "input": "Occasion",
         "output": "The correct spelling is 'Occasion'.",
     }
-    exp = ("""Below is an instruction that describes a task. Write a response that appropriately completes the request.
+    exp = (
+        """Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
 ### Instruction:
 Identify the correct spelling of the following word.
 
 ### Input:
-Occasion""", """
+Occasion""",
+        """
 
 ### Response:
-The correct spelling is 'Occasion'.""")
+The correct spelling is 'Occasion'.""",
+    )
 
     assert format_alpaca(test) == exp
 
@@ -56,15 +61,27 @@ def test_no_input_instruction():
         "output": "An antonym of 'complicated' is 'simple'.",
     }
 
-    exp = ("""Below is an instruction that describes a task. Write a response that appropriately completes the request.
+    exp = (
+        """Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
 ### Instruction:
-What is an antonym of 'complicated'?""", """
+What is an antonym of 'complicated'?""",
+        """
 
 ### Response:
-An antonym of 'complicated' is 'simple'.""")
+An antonym of 'complicated' is 'simple'.""",
+    )
 
     assert format_alpaca(test) == exp
+
+
+def test_split():
+    l = list(range(10))
+
+    assert split(l, [0.5, 0.4, 0.1]) == [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9]]
+
+    with pytest.raises(ValueError, match="Split ratios need to sum to 1"):
+        split(l, [0.5, 0.4])
 
 
 if __name__ == "__main__":
