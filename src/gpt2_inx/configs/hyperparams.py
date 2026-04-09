@@ -8,7 +8,7 @@ GPT2_124M = hyparams(
     ctx_len=1024,
     ff_hidden_dim=(4 * 768),  # 4 x em.
     use_bias=True,
-    dropout_rate = 0.0
+    dropout_rate=0.1,
 )
 
 GPT2_355M = hyparams(
@@ -19,5 +19,5 @@ GPT2_355M = hyparams(
     ctx_len=1024,
     ff_hidden_dim=(4 * 1024),  # 4 x em.
     use_bias=True,
-    dropout_rate = 0.0
+    dropout_rate=0.1,
 )

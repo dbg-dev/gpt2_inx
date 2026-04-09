@@ -43,6 +43,6 @@ class MultiHeadSelfAttention(Module):
         qk = q @ k.swapaxes(-1, -2)
         attn = qk / sqrt(k.shape[-1])
         attn = where(mask == 0, -inf, attn)
-        attn = softmax(attn, axis=-1) @ v
+        attn = self.dp(softmax(attn, axis=-1)) @ v
         z = attn.transpose(0, 2, 1, 3).reshape(B, L, self.embed_dim)
-        return self.dp(self.lin(z))
+        return self.lin(z)

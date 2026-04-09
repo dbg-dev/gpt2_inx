@@ -12,7 +12,7 @@ class Learned(Module):
     def __init__(self, hps: hyparams, rngs: Rngs, train: bool = False):
         self.tok_embedding: Embed = Embed(hps.vocab_size, hps.embed_dim, rngs=rngs)
         self.pos_embedding: Embed = Embed(hps.ctx_len, hps.embed_dim, rngs=rngs)
-        self.dropout: Dropout = Dropout(rate=hps.dropout_rate, rngs=rngs, deterministic=not train)
+        self.dropout: Dropout = Dropout(rate=hps.dropout_rate, rngs=rngs)
 
     @override
     def __call__(self, token_ids: Array) -> Array:
