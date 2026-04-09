@@ -29,8 +29,8 @@ def hfgpt2_to_local(num_layers: int):
     }
 
     non_layer_maps = {
-        ('final_norm', 'bias'): "transformer.ln_f.bias", 
-        ('final_norm', 'scale'): "transformer.ln_f.weight", 
+        ('layernorm', 'bias'): "transformer.ln_f.bias", 
+        ('layernorm', 'scale'): "transformer.ln_f.weight", 
         ('lm_head', 'kernel'): "lm_head.weight", 
         ('embed', 'pos_embedding', 'embedding'): "transformer.wpe.weight", 
         ('embed', 'tok_embedding', 'embedding'): "transformer.wte.weight"

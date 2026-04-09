@@ -54,7 +54,7 @@ class GPT2(Module):
             hps.embed_dim, use_bias=hps.use_bias, rngs=rngs
         )
         self.lm_head: Linear = Linear(
-            hps.embed_dim, hps.vocab_size, use_bias=hps.use_bias, rngs=rngs
+            hps.embed_dim, hps.vocab_size, use_bias=False, rngs=rngs
         )
 
     @override
