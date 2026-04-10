@@ -12,12 +12,5 @@ class hyparams:
     use_bias: bool = False
     dropout_rate: float = 0.1
 
-@dataclass(slots=True)
-class TrainerConfig:
-    learning_rate: float
-    num_epochs: int
-    batch_size: int
-    weight_decay: float
-    train_ratio: float
-    eval_freq: int
-    eval_iter: int
+
+

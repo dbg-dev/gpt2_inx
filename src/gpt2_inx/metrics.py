@@ -1,15 +1,11 @@
-from jax.numpy import take_along_axis, where, expand_dims, exp
-from flax.nnx import Module
+from jax.numpy import where
+from flax.nnx import Module, Rngs
 from jax import Array
-from jax.nn import log_softmax
 from optax import softmax_cross_entropy_with_integer_labels
-
-from loguru import logger
 
 
 def cross_entropy_loss(
-    model: Module,
-    batch: Array,
+    logits: Array,
     labels: Array,
     ignore_index: int = -100,
 ) -> Array:
@@ -22,7 +18,7 @@ def cross_entropy_loss(
     - Avoids divide-by-zero
     """
 
-    logits = model(batch)  # (B, T, vocab_size)
+     # (B, T, vocab_size)
     B, T, vocab_size = logits.shape
 
     # Flatten for Optax
