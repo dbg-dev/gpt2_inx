@@ -20,27 +20,29 @@ class MLP(Module):
 
     @override
     def __call__(self, x: Array):
-        # return pipe(x, self.ln1, nnx.gelu, self.ln2, self.dp)
         return self.mlp(x)
 
 
 class TransformerBlock(Module):
     def __init__(self, hps: hyparams, rngs: Rngs):
-        self.att: Sequential = Sequential(
+        self.mha: Sequential = Sequential(
             LayerNorm(hps.embed_dim, use_bias=hps.use_bias, rngs=rngs, epsilon=1e-5),
-            MultiHeadSelfAttention(hps, rngs),
-            Dropout(hps.dropout_rate, rngs=rngs),
+            MultiHeadSelfAttention(hps, rngs=rngs)
         )
+        self.mha_dp: Dropout = Dropout(hps.dropout_rate)
+        
         self.ff: Sequential = Sequential(
             LayerNorm(hps.embed_dim, use_bias=hps.use_bias, rngs=rngs, epsilon=1e-5),
-            MLP(hps, rngs),
-            Dropout(hps.dropout_rate, rngs=rngs),
+            MLP(hps, rngs=rngs)
         )
+        self.ff_dp: Dropout = Dropout(hps.dropout_rate)
 
     @override
-    def __call__(self, x: Array):
-        x = x + self.att(x)
-        x = x + self.ff(x)
+    def __call__(self, x: Array, *, rngs: Rngs | None = None):
+        mha = self.mha(x, rngs=rngs)
+        x = x + self.mha_dp(mha, rngs=rngs)
+        ff = self.ff(x)
+        x = x + self.ff_dp(ff, rngs=rngs)
         return x
 
 
@@ -58,10 +60,10 @@ class GPT2(Module):
         )
 
     @override
-    def __call__(self, token_ids: Array):
-        x = self.embed(token_ids)
+    def __call__(self, token_ids: Array, *, rngs: Rngs | None = None):
+        x = self.embed(token_ids, rngs=rngs)
         for block in self.blocks:
-            x = block(x)
+            x = block(x, rngs=rngs)
         x = self.layernorm(x)
         logits = self.lm_head(x)
         return logits

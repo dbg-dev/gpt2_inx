@@ -1,6 +1,6 @@
 from typing import override
 
-from jax.numpy import arange, int32
+from jax.numpy import arange, int32  # pyright: ignore[reportUnknownVariableType]
 from flax.nnx import Dropout, Embed, Module, Rngs
 from jax import Array
 
@@ -12,10 +12,10 @@ class Learned(Module):
     def __init__(self, hps: hyparams, rngs: Rngs, train: bool = False):
         self.tok_embedding: Embed = Embed(hps.vocab_size, hps.embed_dim, rngs=rngs)
         self.pos_embedding: Embed = Embed(hps.ctx_len, hps.embed_dim, rngs=rngs)
-        self.dropout: Dropout = Dropout(rate=hps.dropout_rate, rngs=rngs)
+        self.dropout: Dropout = Dropout(rate=hps.dropout_rate)
 
     @override
-    def __call__(self, token_ids: Array) -> Array:
+    def __call__(self, token_ids: Array, *, rngs: Rngs | None = None) -> Array:
         _, L = token_ids.shape
 
         tok_emb = self.tok_embedding(token_ids)
@@ -23,4 +23,4 @@ class Learned(Module):
         pos_emb = self.pos_embedding(posns)[None, :, :]
 
         x = tok_emb + pos_emb
-        return self.dropout(x)
+        return self.dropout(x, rngs=rngs)

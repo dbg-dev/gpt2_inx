@@ -21,12 +21,15 @@ class MultiHeadSelfAttention(Module):
             rngs=rngs,
         )
         self.lin: Linear = Linear(
-            self.embed_dim, self.embed_dim, use_bias=hps.use_bias, rngs=rngs
+            self.embed_dim, 
+            self.embed_dim, 
+            use_bias=hps.use_bias, 
+            rngs=rngs
         )
-        self.dp: Dropout = Dropout(rate=hps.dropout_rate, rngs=rngs)
+        self.dp: Dropout = Dropout(rate=hps.dropout_rate)
 
     @override
-    def __call__(self, x: Array) -> Array:
+    def __call__(self, x: Array, *, rngs: Rngs | None = None) -> Array:
         B, L, _ = x.shape
 
         def split_heads(t: Array) -> Array:
@@ -43,6 +46,7 @@ class MultiHeadSelfAttention(Module):
         qk = q @ k.swapaxes(-1, -2)
         attn = qk / sqrt(k.shape[-1])
         attn = where(mask == 0, -inf, attn)
-        attn = self.dp(softmax(attn, axis=-1)) @ v
+        attn = softmax(attn, axis=-1)
+        attn = self.dp(attn, rngs=rngs) @ v
         z = attn.transpose(0, 2, 1, 3).reshape(B, L, self.embed_dim)
         return self.lin(z)
