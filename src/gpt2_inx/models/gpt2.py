@@ -19,7 +19,7 @@ class MLP(Module):
         )
 
     @override
-    def __call__(self, x: Array):
+    def __call__(self, x: Array, *, rngs: Rngs | None = None):
         return self.mlp(x)
 
 
@@ -41,7 +41,7 @@ class TransformerBlock(Module):
     def __call__(self, x: Array, *, rngs: Rngs | None = None):
         mha = self.mha(x, rngs=rngs)
         x = x + self.mha_dp(mha, rngs=rngs)
-        ff = self.ff(x)
+        ff = self.ff(x, rngs=rngs)
         x = x + self.ff_dp(ff, rngs=rngs)
         return x
 
