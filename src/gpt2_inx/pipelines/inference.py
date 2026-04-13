@@ -59,6 +59,7 @@ def generate(
     k:int = 50, 
     seed:int =  42
 ):
+    model.eval()
     key = PRNGKey(seed)
     graphdef, state = split(model)
     tokens, _ = _generate_loop(
