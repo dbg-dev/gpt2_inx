@@ -1,5 +1,4 @@
 from jax.numpy import where
-from flax.nnx import Module, Rngs
 from jax import Array
 from optax import softmax_cross_entropy_with_integer_labels
 
