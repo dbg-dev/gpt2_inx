@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, TypeAlias
 
@@ -8,6 +8,12 @@ import jax.numpy as jnp
 import optax
 import wandb
 
+from grain import DataLoader, ReadOptions, MapDataset
+from grain.samplers import IndexSampler
+from grain.sharding import NoSharding#, ShardOptions
+from grain.transforms import Batch as btch
+# from grain.experimental import device_put as grain_device_put
+
 from flax import struct
 from flax import nnx
 from jax import Array, device_get, device_put
@@ -15,13 +21,17 @@ from jax import Array, device_get, device_put
 from pathlib import Path
 import orbax.checkpoint as ocp
 
+from gpt2_inx.pipelines.data import XYSource
+
+
 LossFn: TypeAlias = Callable[[Array, Array], Array]
-EvalFn: TypeAlias = Callable[[nnx.Module, Array, Array], dict[str, Array]]
+EvalFn: TypeAlias = Callable[[Array, Array], dict[str, Array]]
 Batch: TypeAlias = tuple[Array, Array]
 
 @dataclass(slots=True)
 class TrainerConfig:
     batch_size: int
+    drop_remainder: bool
     n_epochs: int = 1
     learning_rate: float = 1e-3
     weight_decay: float = 0.0
@@ -34,6 +44,8 @@ class TrainerConfig:
     prefetch_size: int = 2
     checkpoint_dir: str = "./checkpoints"
     save_every: int = 1000
+    n_workers: int = 0
+    worker_buffer_size: int = 1
 
 
 @struct.dataclass
@@ -45,56 +57,37 @@ class TrainState:
     step: Array  # jnp.int32 scalar
 
 
-def iter_batches(
-    data: Batch,
-    batch_size: int,
+def make_loader(
+    data: tuple[Array, Array],
+    config: TrainerConfig,
     *,
-    rng: Array | None = None,
-    shuffle: bool = False,
-    drop_last: bool = False,
+    shuffle: bool,
 ):
-    x, y = data
-    n = x.shape[0]
+    src = XYSource(data)
 
-    if shuffle:
-        if rng is None:
-            raise ValueError("rng required when shuffle=True")
-        perm = jax.random.permutation(rng, n)
-        x, y = x[perm], y[perm]
+    sampler = IndexSampler(
+        num_records=len(src),
+        num_epochs=1, # only use the dataset for one epoch
+        shard_options = NoSharding(),
+        shuffle=shuffle,
+        seed=config.seed,
+    )
 
-    for i in range(0, n, batch_size):
-        xb = x[i : i + batch_size]
-        yb = y[i : i + batch_size]
-        if drop_last and xb.shape[0] < batch_size:
-            continue
-        yield xb, yb
+    operations = [
+        btch(batch_size=config.batch_size, drop_remainder=config.drop_remainder)
+    ]
 
-
-def prefetch_to_device(
-    iterator: Iterator[Any],
-    size: int = 2,
-) -> Generator[Any, None, None]:
-    from collections import deque
-
-    queue = deque[Batch]()
-
-    def _put(batch: Batch):
-        return device_put(batch[0]), device_put(batch[1])
-
-    it = iter(iterator)
-
-    try:
-        for _ in range(size):
-            queue.append(_put(next(it)))
-    except StopIteration:
-        pass
-
-    while queue:
-        yield queue.popleft()
-        try:
-            queue.append(_put(next(it)))
-        except StopIteration:
-            pass
+    return DataLoader(
+        data_source=src,
+        sampler=sampler,
+        operations=operations,
+        worker_count=config.n_workers,
+        worker_buffer_size = config.worker_buffer_size,
+        read_options = ReadOptions(
+            num_threads=0,          # recommended for in-memory data
+            prefetch_buffer_size=0, # keep it simple at first
+        ),
+    )
 
 
 def build_lr_schedule(
@@ -269,23 +262,17 @@ def make_eval_step(eval_fn: EvalFn):
     ) -> dict[str, Array]:
         model = nnx.merge(state.graphdef, state.params)
         model.eval()
-        return eval_fn(model, batch_x, batch_y)
+        logits = model(batch_x) 
+        return eval_fn(logits, batch_y)
 
     return eval_step
 
 
 def run_eval(
     state: TrainState,
-    data: tuple[Array, Array],
-    eval_step: Callable[[TrainState, Array, Array], dict[str, Array]],
-    batch_size: int,
-    *,
-    prefetch_size: int = 2,
+    loader: DataLoader,
+    eval_step: Callable[[TrainState, Array, Array], dict[str, Array]]
 ) -> dict[str, float]:
-    loader = prefetch_to_device(
-        iter_batches(data, batch_size, shuffle=False, drop_last=False),
-        size=prefetch_size,
-    )
 
     totals: dict[str, float] = {}
     count = 0
@@ -305,15 +292,20 @@ def run_eval(
 
 def train(
     model: nnx.Module,
-    train_data: tuple[Array, Array],
+    train_loader: DataLoader,
     loss_fn: LossFn,
     config: TrainerConfig,
     *,
-    eval_data: tuple[Array, Array] | None = None,
+    eval_loader: DataLoader | None = None,
     eval_fn: EvalFn | None = None,
 ) -> tuple[nnx.Module, TrainState]:
-    n_train = train_data[0].shape[0]
-    steps_per_epoch = max(1, (n_train + config.batch_size - 1) // config.batch_size)
+    n_train = len(train_loader._data_source)
+
+    if config.drop_remainder:
+        steps_per_epoch = max(1, n_train // config.batch_size)
+    else:
+        steps_per_epoch = max(1, (n_train + config.batch_size - 1) // config.batch_size)
+
     total_steps = steps_per_epoch * config.n_epochs
 
     tx, lr_schedule = build_tx(config, total_steps)
@@ -323,25 +315,11 @@ def train(
 
     wandb.init(project="nnx-trainer", config=asdict(config))
 
-    key = jax.random.key(config.seed)
-
-    for epoch in range(config.n_epochs):
-        key, subkey = jax.random.split(key)
-
-        loader = prefetch_to_device(
-            iter_batches(
-                train_data,
-                config.batch_size,
-                rng=subkey,
-                shuffle=True,
-                drop_last=False,
-            ),
-            size=config.prefetch_size,
-        )
-
-        for batch_x, batch_y in loader:
+    for _ in range(config.n_epochs):
+        for batch_x, batch_y in train_loader:
             state, train_metrics = train_step(state, batch_x, batch_y)
             step = int(device_get(state.step))
+            epoch = (step - 1) // steps_per_epoch
 
             if step % config.log_every == 0:
                 log_data = {
@@ -354,25 +332,22 @@ def train(
                 wandb.log(log_data)
 
             if (
-                eval_data is not None
+                eval_loader is not None
                 and eval_step is not None
                 and step % config.eval_every == 0
             ):
-                wandb.log({"step": step, **run_eval(
-                    state,
-                    eval_data,
-                    eval_step,
-                    config.batch_size,
-                    prefetch_size=config.prefetch_size,
-                )})
+                wandb.log({
+                    "step": step,
+                    **run_eval(
+                        state,
+                        eval_loader,
+                        eval_step
+                    ),
+                })
 
-            # if (
-            #     config.save_every
-            #     and step % config.save_every == 0
-            # ):
-            #     save_checkpoint(state, config, config.checkpoint_dir)
+        #     if config.save_every and step % config.save_every == 0:
+        #         save_checkpoint(state, config, config.checkpoint_dir)
 
     # save_checkpoint(state, config)
     wandb.finish()
-
     return materialize_model(state), state

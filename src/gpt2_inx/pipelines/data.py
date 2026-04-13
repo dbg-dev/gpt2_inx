@@ -1,11 +1,15 @@
 import random
 
-from typing import Any
+from typing import Any, override
+
 import requests
 import tiktoken
 from loguru import logger
+from jax import Array
 from jax.numpy import asarray, int32  # pyright: ignore[reportUnknownVariableType]
 from itertools import accumulate
+
+from grain.sources import RandomAccessDataSource
 
 type Sample = tuple[list[int], list[int]]
 
@@ -72,6 +76,7 @@ def pad(
 
     return input, label
 
+
 def shuffle(ls: list[Any], seed: int | None):
     logger.info("Shuffle dataset...")
     if seed is not None: 
@@ -106,6 +111,7 @@ def to_jax(dataset: Sample):
     inputs, labels = [asarray(x, int32) for x in zip(*dataset)]
     return inputs, labels
 
+
 # TODO: move this from tiktoken to more generic
 def prep_dataset(ds: list[dict[str, str]], tokenizer: tiktoken.core.Encoding):
     """
@@ -119,25 +125,46 @@ def prep_dataset(ds: list[dict[str, str]], tokenizer: tiktoken.core.Encoding):
     xys = ([pad(e, max_len) for e in encoded])
     return to_jax(xys)
 
+
 # TODO: move this from tiktoken to more generic
-def prepare(url: str, tokenizer: tiktoken.core.Encoding):
-    splits = [0.85, 0.1, 0.05]
+def get_datasets(url: str, splits: list[float]) -> list[list[Any]]:
     inx = get_instructions(url)
     shuffle(inx, seed = None)
-    training, test, validation = split(inx, splits)
+    return split(inx, splits)
 
-    train_ds, val_ds = [prep_dataset(d, tokenizer) for d in [training, validation]]
-    test_prompts = [format_alpaca(i) for i in test]
 
-    return train_ds, val_ds, test_prompts
+def get_test_prompts(ds: list[dict[str, str]]):
+    return [format_alpaca(smpl) for smpl in ds]
+
+
+def prepare(url: str, splits: list[float], tokenizer: tiktoken.Encoding):
+
+    tr, ts, vld = get_datasets(url, splits)
+    train, valid = [prep_dataset(ds, tokenizer) for ds in [tr, vld]]
+    test = get_test_prompts(ts)
+
+    return train, valid, test
+
+
+class XYSource(RandomAccessDataSource[tuple[Array, Array]]):
+    def __init__(self, data: tuple[Array, Array]):
+        self.x: Array = data[0]
+        self.y: Array = data[1]
+
+    @override
+    def __len__(self) -> int:
+        return self.x.shape[0]
+
+    @override
+    def __getitem__(self, i: int) -> tuple[Array, Array]:
+        return self.x[i], self.y[i]
 
 
 def main():
     url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch07/01_main-chapter-code/instruction-data.json"
     tokenizer = tiktoken.get_encoding("gpt2")
-    _ = prepare(url, tokenizer)
-
-
+    splits = [0.85, 0.1, 0.05]
+    _, _, _ = prepare(url, splits, tokenizer)
 
 
 if __name__ == "__main__":
