@@ -4,7 +4,7 @@ from typing import Any
 import requests
 import tiktoken
 from loguru import logger
-from jax.numpy import asarray, int32
+from jax.numpy import asarray, int32  # pyright: ignore[reportUnknownVariableType]
 from itertools import accumulate
 
 type Sample = tuple[list[int], list[int]]
