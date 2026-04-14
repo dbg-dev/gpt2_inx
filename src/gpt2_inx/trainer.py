@@ -309,12 +309,12 @@ def train(
                     **run_eval(state, eval_loader_fn, eval_step),
                 })
 
-        #     if (
-        #         checkpoint is not None
-        #         and step % checkpoint.config.save_every == 0
-        #     ):
-        #         logger.debug("Save checkpoint to {}", checkpoint.config.dir)
-        #         checkpoint.save(state, config)
+            if (
+                checkpoint is not None
+                and step % checkpoint.config.save_every == 0
+            ):
+                logger.debug("Save checkpoint to {}", checkpoint.config.dir)
+                checkpoint.save(state, config)
 
         if checkpoint is not None:
             logger.debug("Save checkpoint to {}", checkpoint.config.dir)
