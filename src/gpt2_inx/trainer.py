@@ -36,13 +36,12 @@ class TrainerConfig:
     grad_clip_norm: float = 1.0
     warmup_steps: int = 100
     min_learning_rate: float = 0.0
-    seed: int = 0
+    seed: int = 42
     log_every: int = 100
     eval_every: int = 500
-    prefetch_size: int = 2
-    checkpoint_dir: str = "./checkpoints"
-    save_every: int = 1000
+    prefetch_size: int = 0
     n_workers: int = 0
+    n_threads: int = 0
     worker_buffer_size: int = 1
 
 
