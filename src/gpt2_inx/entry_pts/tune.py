@@ -5,7 +5,7 @@ from gpt2_inx.configs.hyperparams import GPT2_124M
 from jax import Array
 from gpt2_inx.pipelines.model import from_hf
 from gpt2_inx.pipelines.data import prepare
-from gpt2_inx.trainer import make_eval_loader, make_sampler, make_source, train, TrainerConfig, make_train_loader
+from gpt2_inx.trainer import make_eval_loader, train, TrainerConfig, make_train_loader
 from gpt2_inx.metrics import cross_entropy_loss
 from gpt2_inx.pipelines.inference import generate
 
@@ -13,6 +13,7 @@ def main():
     url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch07/01_main-chapter-code/instruction-data.json"
     model_id = "gpt2"
     splits = [0.85, 0.1, 0.05]
+    model = from_hf(GPT2_124M, model_id)
 
     # tokenizer = tiktoken.get_encoding(model_id)
     tokenizer = GPT2Tokenizer.from_pretrained(model_id)
@@ -25,7 +26,9 @@ def main():
         learning_rate=5e-5, 
         weight_decay=0.1,
         log_every = 5,
-        eval_every = 5
+        eval_every = 5,
+        prefetch_size = 4
+        n_workers = 4
     )
 
     def eval_fn(x: Array, y: Array) -> dict[str, Array]:
@@ -35,13 +38,10 @@ def main():
     train_ds, val_ds, test_ds = prepare(url, splits, tokenizer)
     n_train = len(train_ds[0])
 
-    # setup model and trainer
-    hfmodel = model_id
-    model = from_hf(GPT2_124M, hfmodel)
 
     train_loader = make_train_loader(train_ds, config)
 
-    logger.info("Training model {}", hfmodel)
+    logger.info("Training model {}", model_id)
     model, _ = train(
         "nnx-trainer",
         model,
