@@ -10,9 +10,7 @@ import wandb
 
 from grain import DataLoader, ReadOptions, MapDataset
 from grain.samplers import IndexSampler
-from grain.sharding import NoSharding#, ShardOptions
-from grain.transforms import Batch as btch
-# from grain.experimental import device_put as grain_device_put
+from grain.transforms import Batch 
 
 from flax import struct
 from flax import nnx
@@ -67,14 +65,14 @@ def make_loader(
 
     sampler = IndexSampler(
         num_records=len(src),
-        num_epochs=1, # only use the dataset for one epoch
+        num_epochs = 1, # 1 => will resample every epoch
         shard_options = NoSharding(),
         shuffle=shuffle,
         seed=config.seed,
     )
 
     operations = [
-        btch(batch_size=config.batch_size, drop_remainder=config.drop_remainder)
+        Batch(batch_size=config.batch_size, drop_remainder=config.drop_remainder)
     ]
 
     return DataLoader(
@@ -84,8 +82,8 @@ def make_loader(
         worker_count=config.n_workers,
         worker_buffer_size = config.worker_buffer_size,
         read_options = ReadOptions(
-            num_threads=0,          # recommended for in-memory data
-            prefetch_buffer_size=0, # keep it simple at first
+            num_threads=config.n_threads,          # recommended for in-memory data
+            prefetch_buffer_size=config.prefetch_size, # keep it simple at first
         ),
     )
 
