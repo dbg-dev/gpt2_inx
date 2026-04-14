@@ -5,7 +5,7 @@ from gpt2_inx.configs.hyperparams import GPT2_124M
 from jax import Array
 from gpt2_inx.pipelines.model import from_hf
 from gpt2_inx.pipelines.data import prepare
-from gpt2_inx.trainer import train, TrainerConfig, make_loader
+from gpt2_inx.trainer import make_eval_loader, make_sampler, make_source, train, TrainerConfig, make_train_loader
 from gpt2_inx.metrics import cross_entropy_loss
 from gpt2_inx.pipelines.inference import generate
 
@@ -33,30 +33,23 @@ def main():
         return {"loss": loss}
 
     train_ds, val_ds, test_ds = prepare(url, splits, tokenizer)
+    n_train = len(train_ds[0])
 
     # setup model and trainer
     hfmodel = model_id
     model = from_hf(GPT2_124M, hfmodel)
 
-    train_loader = make_loader(
-        data = train_ds,
-        config = config,
-        shuffle = True
-    )
-
-    val_loader = make_loader(
-        data = val_ds,
-        config = config,
-        shuffle = False
-    )
+    train_loader = make_train_loader(train_ds, config)
 
     logger.info("Training model {}", hfmodel)
     model, _ = train(
+        "nnx-trainer",
         model,
         train_loader,
         loss_fn = cross_entropy_loss,
         config = config,
-        eval_loader = val_loader,
+        n_train=n_train,
+        eval_loader_fn = lambda: make_eval_loader(val_ds, config),
         eval_fn = eval_fn
     )
 

@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Any, TypeAlias
+from typing import Any, Sequence, TypeAlias
 
 
 import jax
@@ -11,7 +11,7 @@ import wandb
 from grain import DataLoader, ReadOptions
 from grain.samplers import IndexSampler
 from grain.sharding import NoSharding
-from grain.transforms import Batch 
+from grain.transforms import Batch
 
 from flax import struct
 from flax import nnx
@@ -44,6 +44,11 @@ class TrainerConfig:
     n_threads: int = 0
     worker_buffer_size: int = 1
 
+@dataclass(slots=True)
+class CheckpointConfig:
+    dir: str = "./checkpoints"
+    save_every: int = 1000
+
 
 @struct.dataclass
 class TrainState:
@@ -54,38 +59,118 @@ class TrainState:
     step: Array  # jnp.int32 scalar
 
 
-def make_loader(
-    data: tuple[Array, Array],
-    config: TrainerConfig,
-    *,
-    shuffle: bool,
-):
-    src = XYSource(data)
 
-    sampler = IndexSampler(
-        num_records=len(src),
-        num_epochs = 1, # 1 => will resample every epoch
-        shard_options = NoSharding(),
+# ------------------
+# Data loader
+# ------------------
+
+
+def make_source(data: tuple[Array, Array]) -> XYSource:
+    return XYSource(data)
+
+
+def make_sampler(
+    *,
+    num_records: int,
+    seed: int,
+    shuffle: bool,
+    num_epochs: int,
+) -> IndexSampler:
+    return IndexSampler(
+        num_records=num_records,
+        num_epochs=num_epochs,
+        shard_options=NoSharding(),
         shuffle=shuffle,
-        seed=config.seed,
+        seed=seed,
     )
 
-    operations = [
-        Batch(batch_size=config.batch_size, drop_remainder=config.drop_remainder)
+
+def make_batch_operations(
+    *,
+    batch_size: int,
+    drop_remainder: bool,
+) -> list[Batch]:
+    return [
+        Batch(
+            batch_size=batch_size,
+            drop_remainder=drop_remainder,
+        )
     ]
 
-    return DataLoader(
-        data_source=src,
-        sampler=sampler,
-        operations=operations,
-        worker_count=config.n_workers,
-        worker_buffer_size = config.worker_buffer_size,
-        read_options = ReadOptions(
-            num_threads=config.n_threads,          # recommended for in-memory data
-            prefetch_buffer_size=config.prefetch_size, # keep it simple at first
-        ),
+
+def make_read_options(config: TrainerConfig) -> ReadOptions:
+    return ReadOptions(
+        num_threads=config.n_threads,
+        prefetch_buffer_size=config.prefetch_size,
     )
 
+
+def make_loader(
+    *,
+    source: XYSource,
+    sampler: IndexSampler,
+    operations: Sequence[Any],
+    config: TrainerConfig,
+) -> DataLoader:
+    return DataLoader(
+        data_source=source,
+        sampler=sampler,
+        operations=list(operations),
+        worker_count=config.n_workers,
+        worker_buffer_size=config.worker_buffer_size,
+        read_options=make_read_options(config),
+    )
+
+
+def make_train_loader(
+    data: tuple[Array, Array],
+    config: TrainerConfig,
+) -> DataLoader:
+    source = make_source(data)
+    sampler = make_sampler(
+        num_records=len(source),
+        seed=config.seed,
+        shuffle=True,
+        num_epochs=config.n_epochs,
+    )
+    operations = make_batch_operations(
+        batch_size=config.batch_size,
+        drop_remainder=config.drop_remainder,
+    )
+    return make_loader(
+        source=source,
+        sampler=sampler,
+        operations=operations,
+        config=config,
+    )
+
+
+def make_eval_loader(
+    data: tuple[Array, Array],
+    config: TrainerConfig,
+) -> DataLoader:
+    source = make_source(data)
+    sampler = make_sampler(
+        num_records=len(source),
+        seed=config.seed,
+        shuffle=False,
+        num_epochs=1,
+    )
+    operations = make_batch_operations(
+        batch_size=config.batch_size,
+        drop_remainder=False,
+    )
+    return make_loader(
+        source=source,
+        sampler=sampler,
+        operations=operations,
+        config=config,
+    )
+
+
+# ------------------
+# Trainer
+# ------------------
 
 def build_lr_schedule(
     *,
@@ -130,7 +215,7 @@ def build_tx(
 def build_train_state(
     model: nnx.Module,
     tx: optax.GradientTransformation,
-    seed:int = 0
+    seed: int = 0
 ) -> TrainState:
     graphdef, params = nnx.split(model, nnx.Param)
     opt_state = tx.init(params)
@@ -160,7 +245,7 @@ def _checkpoint_payload(state: TrainState, config: TrainerConfig) -> dict[str, A
         "params": state.params,
         "opt_state": state.opt_state,
         "rng_key": state.rng_key,
-        "step": state.step,
+        "step": state.step, # use this to track where checkpoint got to in training.
         "config": asdict(config),
     }
 
@@ -168,16 +253,17 @@ def _checkpoint_payload(state: TrainState, config: TrainerConfig) -> dict[str, A
 
 def save_checkpoint(
     state: TrainState,
-    config: TrainerConfig
+    trainer_config: TrainerConfig,
+    checkpoint_config: CheckpointConfig
 ) -> Path:
-    ckpt_dir = Path(config.checkpoint_dir)
+    ckpt_dir = Path(checkpoint_config.dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     step = int(device_get(state.step))
     path = ckpt_dir / f"step_{step:08d}"
 
     with ocp.StandardCheckpointer() as ckptr:
-        ckptr.save(path, _checkpoint_payload(state, config))
+        ckptr.save(path, _checkpoint_payload(state, trainer_config))
 
     return path
 
@@ -207,7 +293,9 @@ def restore_checkpoint(
         step=restored["step"],
     )
 
-
+# ------------------
+# Train and eval builders
+# ------------------
 
 
 def make_train_step(
@@ -268,62 +356,45 @@ def make_eval_step(eval_fn: EvalFn):
 
 def run_eval(
     state: TrainState,
-    loader: DataLoader,
-    eval_step: Callable[[TrainState, Array, Array], dict[str, Array]]
+    loader_fn: Callable[[], DataLoader],
+    eval_step: Callable[[TrainState, Array, Array], dict[str, Array]],
 ) -> dict[str, float]:
-
-    totals: dict[str, float] = {}
-    count = 0
-
-    for batch_x, batch_y in loader:
-        metrics = eval_step(state, batch_x, batch_y)
-        count += 1
-        for k, v in metrics.items():
-            totals[k] = totals.get(k, 0.0) + float(device_get(v))
-
-    if count == 0:
-        return {}
-
-    return {f"eval/{k}": v / count for k, v in totals.items()}
-
-def run_eval(
-    state: TrainState,
-    loader: DataLoader,
-    eval_step: Callable[[TrainState, Array, Array], dict[str, Array]]
-) -> dict[str, float]:
-
     totals: dict[str, Array] = {}
-    count = 0
+    total_examples = 0
 
-    for batch_x, batch_y in loader:
+    for batch_x, batch_y in loader_fn():
         metrics = eval_step(state, batch_x, batch_y)
-        count += 1
-        for k, v in metrics.items():
-            totals[k] = totals.get(k, 0.0) + v
+        batch_size = batch_x.shape[0]
+        total_examples += batch_size
 
-    if count == 0:
+        for k, v in metrics.items():
+            totals[k] = totals.get(k, 0) + v * batch_size
+
+    if total_examples == 0:
         return {}
 
     return {
-        f"eval/{k}": float(device_get(v)) / count
+        f"eval/{k}": float(device_get(v)) / total_examples
         for k, v in totals.items()
     }
 
-
+# ------------------
+# Trainer
+# ------------------
 
 def train(
+    project: str,
     model: nnx.Module,
     train_loader: DataLoader,
     loss_fn: LossFn,
     config: TrainerConfig,
     *,
-    eval_loader: DataLoader | None = None,
+    n_train: int,
+    eval_loader_fn: Callable[[], DataLoader] | None = None,
     eval_fn: EvalFn | None = None,
 ) -> tuple[nnx.Module, TrainState]:
-    if (eval_loader is None) != (eval_fn is None):
+    if (eval_loader_fn is None) != (eval_fn is None):
         raise ValueError("Provide both eval_loader and eval_fn, or neither.")
-
-    n_train = len(train_loader._data_source)
 
     if config.drop_remainder:
         steps_per_epoch = max(1, n_train // config.batch_size)
@@ -337,41 +408,36 @@ def train(
     train_step = make_train_step(loss_fn, tx)
     eval_step = make_eval_step(eval_fn) if eval_fn is not None else None
 
-    wandb.init(project="nnx-trainer", config=asdict(config))
+    step = int(device_get(state.step))
 
-    for _ in range(config.n_epochs):
+    wandb.init(project=project, config=asdict(config))
+    try:
         for batch_x, batch_y in train_loader:
             state, train_metrics = train_step(state, batch_x, batch_y)
-            step = int(device_get(state.step))
+
+            step = int(device_get(state.step)) # kind of hate the constant get, but good to have in sync
             epoch = (step - 1) // steps_per_epoch
 
             if step % config.log_every == 0:
                 log_data = {
                     "step": step,
                     "epoch": epoch,
-                    "lr": float(device_get(lr_schedule(state.step - 1))),
+                    "lr": float(device_get(lr_schedule(step - 1))),
                 }
                 for k, v in train_metrics.items():
                     log_data[k] = float(device_get(v))
                 wandb.log(log_data)
 
             if (
-                eval_loader is not None
+                eval_loader_fn is not None
                 and eval_step is not None
                 and step % config.eval_every == 0
             ):
                 wandb.log({
                     "step": step,
-                    **run_eval(
-                        state,
-                        eval_loader,
-                        eval_step
-                    ),
+                    **run_eval(state, eval_loader_fn, eval_step),
                 })
 
-        #     if config.save_every and step % config.save_every == 0:
-        #         save_checkpoint(state, config, config.checkpoint_dir)
-
-    # save_checkpoint(state, config)
-    wandb.finish()
-    return materialize_model(state), state
+        return materialize_model(state), state
+    finally:
+        wandb.finish()
