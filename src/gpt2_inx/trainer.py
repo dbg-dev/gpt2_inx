@@ -8,13 +8,14 @@ import jax.numpy as jnp
 import optax
 import wandb
 
-from grain import DataLoader, ReadOptions, MapDataset
+from grain import DataLoader, ReadOptions
 from grain.samplers import IndexSampler
+from grain.sharding import NoSharding
 from grain.transforms import Batch 
 
 from flax import struct
 from flax import nnx
-from jax import Array, device_get, device_put
+from jax import Array, device_get
 
 from pathlib import Path
 import orbax.checkpoint as ocp
@@ -298,6 +299,9 @@ def train(
     eval_loader: DataLoader | None = None,
     eval_fn: EvalFn | None = None,
 ) -> tuple[nnx.Module, TrainState]:
+    if (eval_loader is None) != (eval_fn is None):
+        raise ValueError("Provide both eval_loader and eval_fn, or neither.")
+
     n_train = len(train_loader._data_source)
 
     if config.drop_remainder:
@@ -308,7 +312,7 @@ def train(
     total_steps = steps_per_epoch * config.n_epochs
 
     tx, lr_schedule = build_tx(config, total_steps)
-    state = build_train_state(model, tx)
+    state = build_train_state(model, tx, config.seed)
     train_step = make_train_step(loss_fn, tx)
     eval_step = make_eval_step(eval_fn) if eval_fn is not None else None
 
