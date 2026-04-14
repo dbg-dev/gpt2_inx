@@ -57,7 +57,7 @@ def main():
         loss_fn = cross_entropy_loss,
         config = config,
         eval_loader = val_loader,
-        # eval_fn = eval_fn
+        eval_fn = eval_fn
     )
 
     # logger.info("Test model responses")

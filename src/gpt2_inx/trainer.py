@@ -162,6 +162,7 @@ def _checkpoint_payload(state: TrainState, config: TrainerConfig) -> dict[str, A
         "graphdef": state.graphdef,
         "params": state.params,
         "opt_state": state.opt_state,
+        "rng_key": state.rng_key,
         "step": state.step,
         "config": asdict(config),
     }
