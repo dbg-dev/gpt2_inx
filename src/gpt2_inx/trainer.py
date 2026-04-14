@@ -25,7 +25,6 @@ from gpt2_inx.pipelines.data import XYSource
 
 LossFn: TypeAlias = Callable[[Array, Array], Array]
 EvalFn: TypeAlias = Callable[[Array, Array], dict[str, Array]]
-Batch: TypeAlias = tuple[Array, Array]
 
 @dataclass(slots=True)
 class TrainerConfig:
