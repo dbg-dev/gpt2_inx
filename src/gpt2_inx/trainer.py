@@ -288,6 +288,29 @@ def run_eval(
 
     return {f"eval/{k}": v / count for k, v in totals.items()}
 
+def run_eval(
+    state: TrainState,
+    loader: DataLoader,
+    eval_step: Callable[[TrainState, Array, Array], dict[str, Array]]
+) -> dict[str, float]:
+
+    totals: dict[str, Array] = {}
+    count = 0
+
+    for batch_x, batch_y in loader:
+        metrics = eval_step(state, batch_x, batch_y)
+        count += 1
+        for k, v in metrics.items():
+            totals[k] = totals.get(k, 0.0) + v
+
+    if count == 0:
+        return {}
+
+    return {
+        f"eval/{k}": float(device_get(v)) / count
+        for k, v in totals.items()
+    }
+
 
 
 def train(
