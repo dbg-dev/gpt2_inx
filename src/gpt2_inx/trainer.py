@@ -1,56 +1,28 @@
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
-from typing import Any, Sequence, TypeAlias
+from typing import Any, TypeAlias
+from pathlib import Path
+from loguru import logger
 
 
 import jax
 import jax.numpy as jnp
 import optax
+import orbax.checkpoint as ocp
 import wandb
-
-from grain import DataLoader, ReadOptions
-from grain.samplers import IndexSampler
-from grain.sharding import NoSharding
-from grain.transforms import Batch
-
+from grain import DataLoader
 from flax import struct
 from flax import nnx
 from jax import Array, device_get
 
-from pathlib import Path
-import orbax.checkpoint as ocp
+from gpt2_inx.configuration import RuntimeConfig, CheckpointConfig
 
-from gpt2_inx.pipelines.data import XYSource
 
 
 LossFn: TypeAlias = Callable[[Array, Array], Array]
 EvalFn: TypeAlias = Callable[[Array, Array], dict[str, Array]]
 
-@dataclass(slots=True)
-class TrainerConfig:
-    batch_size: int
-    drop_remainder: bool
-    n_epochs: int = 1
-    learning_rate: float = 1e-3
-    weight_decay: float = 0.0
-    grad_clip_norm: float = 1.0
-    warmup_steps: int = 100
-    min_learning_rate: float = 0.0
-    seed: int = 42
-    log_every: int = 100
-    eval_every: int = 500
-    prefetch_size: int = 0
-    n_workers: int = 0
-    n_threads: int = 0
-    worker_buffer_size: int = 1
 
-@dataclass(slots=True)
-class CheckpointConfig:
-    dir: str = "./checkpoints"
-    save_every: int = 1000
-
-
-@struct.dataclass
+@struct.dataclass # Turns the class into a pyTree and makes it immutable
 class TrainState:
     graphdef: nnx.GraphDef[Any]
     params: nnx.State
@@ -59,113 +31,69 @@ class TrainState:
     step: Array  # jnp.int32 scalar
 
 
-
 # ------------------
-# Data loader
+# Checkpointing
 # ------------------
 
+class CheckpointIO:
+    def __init__(self, config: CheckpointConfig):
+        self.config: CheckpointConfig = config
+        self.root: Path = Path(config.dir)
+        self.root.mkdir(parents=True, exist_ok=True)
 
-def make_source(data: tuple[Array, Array]) -> XYSource:
-    return XYSource(data)
+    def payload(
+        self,
+        state: TrainState,
+        runtime_config: RuntimeConfig | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "graphdef": state.graphdef,
+            "params": state.params,
+            "opt_state": state.opt_state,
+            "rng_key": state.rng_key,
+            "step": state.step,
+        }
+        if runtime_config is not None:
+            payload["runtime_config"] = runtime_config.model_dump()
+        return payload
 
+    def save(
+        self,
+        state: TrainState,
+        runtime_config: RuntimeConfig | None = None,
+    ) -> Path:
+        step = int(device_get(state.step))
+        path = self.root / f"step_{step:08d}"
 
-def make_sampler(
-    *,
-    num_records: int,
-    seed: int,
-    shuffle: bool,
-    num_epochs: int,
-) -> IndexSampler:
-    return IndexSampler(
-        num_records=num_records,
-        num_epochs=num_epochs,
-        shard_options=NoSharding(),
-        shuffle=shuffle,
-        seed=seed,
-    )
+        with ocp.StandardCheckpointer() as ckptr:
+            ckptr.save(path, self.payload(state, runtime_config))
 
+        return path
 
-def make_batch_operations(
-    *,
-    batch_size: int,
-    drop_remainder: bool,
-) -> list[Batch]:
-    return [
-        Batch(
-            batch_size=batch_size,
-            drop_remainder=drop_remainder,
+    def restore(
+        self,
+        checkpoint_path: str | Path,
+        abstract_state: TrainState,
+    ) -> TrainState:
+        path = Path(checkpoint_path)
+        abstract_payload = {
+            "graphdef": abstract_state.graphdef,
+            "params": abstract_state.params,
+            "opt_state": abstract_state.opt_state,
+            "rng_key": abstract_state.rng_key,
+            "step": abstract_state.step,
+        }
+
+        with ocp.StandardCheckpointer() as ckptr:
+            restored = ckptr.restore(path, abstract_payload)
+
+        return TrainState(
+            graphdef=restored["graphdef"],
+            params=restored["params"],
+            opt_state=restored["opt_state"],
+            rng_key=restored["rng_key"],
+            step=restored["step"],
         )
-    ]
-
-
-def make_read_options(config: TrainerConfig) -> ReadOptions:
-    return ReadOptions(
-        num_threads=config.n_threads,
-        prefetch_buffer_size=config.prefetch_size,
-    )
-
-
-def make_loader(
-    *,
-    source: XYSource,
-    sampler: IndexSampler,
-    operations: Sequence[Any],
-    config: TrainerConfig,
-) -> DataLoader:
-    return DataLoader(
-        data_source=source,
-        sampler=sampler,
-        operations=list(operations),
-        worker_count=config.n_workers,
-        worker_buffer_size=config.worker_buffer_size,
-        read_options=make_read_options(config),
-    )
-
-
-def make_train_loader(
-    data: tuple[Array, Array],
-    config: TrainerConfig,
-) -> DataLoader:
-    source = make_source(data)
-    sampler = make_sampler(
-        num_records=len(source),
-        seed=config.seed,
-        shuffle=True,
-        num_epochs=config.n_epochs,
-    )
-    operations = make_batch_operations(
-        batch_size=config.batch_size,
-        drop_remainder=config.drop_remainder,
-    )
-    return make_loader(
-        source=source,
-        sampler=sampler,
-        operations=operations,
-        config=config,
-    )
-
-
-def make_eval_loader(
-    data: tuple[Array, Array],
-    config: TrainerConfig,
-) -> DataLoader:
-    source = make_source(data)
-    sampler = make_sampler(
-        num_records=len(source),
-        seed=config.seed,
-        shuffle=False,
-        num_epochs=1,
-    )
-    operations = make_batch_operations(
-        batch_size=config.batch_size,
-        drop_remainder=False,
-    )
-    return make_loader(
-        source=source,
-        sampler=sampler,
-        operations=operations,
-        config=config,
-    )
 
 
 # ------------------
@@ -192,7 +120,7 @@ def build_lr_schedule(
 
 
 def build_tx(
-    config: TrainerConfig,
+    config: RuntimeConfig,
     total_steps: int,
 ) -> tuple[optax.GradientTransformation, optax.Schedule]:
     lr_schedule = build_lr_schedule(
@@ -233,65 +161,6 @@ def materialize_model(state: TrainState) -> nnx.Module:
     model.eval()
     return model
 
-
-
-# ------------------
-# Checkpointing
-# ------------------
-
-def _checkpoint_payload(state: TrainState, config: TrainerConfig) -> dict[str, Any]:
-    return {
-        "graphdef": state.graphdef,
-        "params": state.params,
-        "opt_state": state.opt_state,
-        "rng_key": state.rng_key,
-        "step": state.step, # use this to track where checkpoint got to in training.
-        "config": asdict(config),
-    }
-
-
-
-def save_checkpoint(
-    state: TrainState,
-    trainer_config: TrainerConfig,
-    checkpoint_config: CheckpointConfig
-) -> Path:
-    ckpt_dir = Path(checkpoint_config.dir)
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    step = int(device_get(state.step))
-    path = ckpt_dir / f"step_{step:08d}"
-
-    with ocp.StandardCheckpointer() as ckptr:
-        ckptr.save(path, _checkpoint_payload(state, trainer_config))
-
-    return path
-
-
-def restore_checkpoint(
-    checkpoint_path: str | Path,
-    abstract_state: TrainState,
-) -> TrainState:
-    path = Path(checkpoint_path)
-    abstract_payload = {
-        "graphdef": abstract_state.graphdef,
-        "params": abstract_state.params,
-        "opt_state": abstract_state.opt_state,
-        "rng_key": abstract_state.rng_key,
-        "step": abstract_state.step,
-        "config": {},
-    }
-
-    with ocp.StandardCheckpointer() as ckptr:
-        restored = ckptr.restore(path, abstract_payload)
-
-    return TrainState(
-        graphdef=restored["graphdef"],
-        params=restored["params"],
-        opt_state=restored["opt_state"],
-        rng_key=restored["rng_key"],
-        step=restored["step"],
-    )
 
 # ------------------
 # Train and eval builders
@@ -383,15 +252,15 @@ def run_eval(
 # ------------------
 
 def train(
-    project: str,
     model: nnx.Module,
     train_loader: DataLoader,
     loss_fn: LossFn,
-    config: TrainerConfig,
+    config: RuntimeConfig,
     *,
     n_train: int,
     eval_loader_fn: Callable[[], DataLoader] | None = None,
     eval_fn: EvalFn | None = None,
+    checkpoint: CheckpointIO | None = None
 ) -> tuple[nnx.Module, TrainState]:
     if (eval_loader_fn is None) != (eval_fn is None):
         raise ValueError("Provide both eval_loader and eval_fn, or neither.")
@@ -410,12 +279,13 @@ def train(
 
     step = int(device_get(state.step))
 
-    wandb.init(project=project, config=asdict(config))
+    wandb.init(project=config.project_name, config=config.model_dump())
     try:
         for batch_x, batch_y in train_loader:
             state, train_metrics = train_step(state, batch_x, batch_y)
 
-            step = int(device_get(state.step)) # kind of hate the constant get, but good to have in sync
+            # step = int(device_get(state.step)) # kind of hate the constant get, but good to have in sync
+            step += 1
             epoch = (step - 1) // steps_per_epoch
 
             if step % config.log_every == 0:
@@ -424,6 +294,7 @@ def train(
                     "epoch": epoch,
                     "lr": float(device_get(lr_schedule(step - 1))),
                 }
+                logger.info("step = {}", step)
                 for k, v in train_metrics.items():
                     log_data[k] = float(device_get(v))
                 wandb.log(log_data)
@@ -437,6 +308,17 @@ def train(
                     "step": step,
                     **run_eval(state, eval_loader_fn, eval_step),
                 })
+
+        #     if (
+        #         checkpoint is not None
+        #         and step % checkpoint.config.save_every == 0
+        #     ):
+        #         logger.debug("Save checkpoint to {}", checkpoint.config.dir)
+        #         checkpoint.save(state, config)
+
+        if checkpoint is not None:
+            logger.debug("Save checkpoint to {}", checkpoint.config.dir)
+            checkpoint.save(state, config)
 
         return materialize_model(state), state
     finally:
